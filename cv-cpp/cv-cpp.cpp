@@ -13,7 +13,7 @@ uint32_t get_wait = 0;
 uint32_t put_wait = 0;
 uint32_t get_count = 0;
 uint32_t put_count = 0;
-bool terminate = false;
+bool kill_all = false;
 
 // bounded queue type
 template<typename T> class bounded_queue_t {
@@ -132,7 +132,7 @@ public:
 void update(size_t c)
 {
 	static uint32_t count = 0;
-	printf("%u:%lu PUT::%u:%u  GET:%u:%u COUNT:%u\n",put_count-get_count,c, put_count,put_wait,get_count, get_wait, ++count);
+	printf("%u:%zu PUT::%u:%u  GET:%u:%u COUNT:%u\n",put_count-get_count,c, put_count,put_wait,get_count, get_wait, ++count);
 }
 
 void getter(bounded_queue_t<uint64_t> *q)
@@ -143,7 +143,7 @@ void getter(bounded_queue_t<uint64_t> *q)
 
 	u = 0;
 	v = 0;
-	while(!terminate) {
+	while(!kill_all) {
 		// sleep a random amount
 		std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
 
@@ -152,12 +152,12 @@ void getter(bounded_queue_t<uint64_t> *q)
 
 		// quit on failure
 		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %lu\n", __FILE__, __LINE__, u);
+			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, u);
 			exit(1);
 		}
 		// check the data (v must be equal or greater than u)
 		if (v < u) {
-			printf("%s:%d QUEUE GET MISMATCH : %lu %lu\n", __FILE__, __LINE__, u, v);
+			printf("%s:%d QUEUE GET MISMATCH : %zu %zu\n", __FILE__, __LINE__, u, v);
 			exit(1);
 		}
 		// update u
@@ -172,7 +172,7 @@ void putter(bounded_queue_t<uint64_t> *q)
 	int32_t  status;
 
 	v = 0;
-	while(!terminate) {
+	while(!kill_all) {
 		// sleep a random amount
 		std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 200));
 
@@ -181,7 +181,7 @@ void putter(bounded_queue_t<uint64_t> *q)
 
 		// quit on failure
 		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %lu\n", __FILE__, __LINE__, v);
+			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, v);
 			exit(1);
 		}
 
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
 
 		update(q.size());
 	}
-	terminate = true;
+	kill_all = true;
 	t1.join();
 	t2.join();
 	return 0;
