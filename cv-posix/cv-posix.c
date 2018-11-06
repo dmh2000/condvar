@@ -1,10 +1,11 @@
-#include <Windows.h>
-#include <process.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <assert.h>
-#include <conio.h>
+
 
 #define QUEUE_SUCCESS 0
 #define QUEUE_FAIL    1
@@ -26,11 +27,11 @@ typedef struct queue_node_t {
 // bounded queue type
 typedef struct bounded_queue_t {
 	// critical section for condition variable functions
-	CRITICAL_SECTION m_csec;
+	pthread_mutex_t m_cvmtx;
 	// condition variable for inserting data into the queue
-	CONDITION_VARIABLE m_cvput;
+	pthread_cond_t m_cvput;
 	// condition varialbe for getting data from the queue
-	CONDITION_VARIABLE m_cvget;
+	pthread_cond_t m_cvget;
 	// head of queue
 	queue_node_t *m_head;
 	// tail of queue
@@ -46,17 +47,22 @@ uint32_t put_count = 0;
 
 void update(void)
 {
-	printf("\rPUT : %8u  GET : %8u", put_count, get_count);
+	printf("PUT : %8u  GET : %8u\n", put_count, get_count);
 }
 
 int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 {
+    int status;
+
 	// initialize a critical section dedicated to the condition variable
-	InitializeCriticalSection(&q->m_csec);
+	status = pthread_mutex_init(&q->m_cvmtx,NULL);
+    assert(status == 0);
 
 	// initialize the condition variables
-	InitializeConditionVariable(&q->m_cvput);
-	InitializeConditionVariable(&q->m_cvget);
+	status = pthread_cond_init(&q->m_cvput, NULL);
+    assert(status == 0);
+    status = pthread_cond_init(&q->m_cvget, NULL);
+    assert(status == 0);
 
 	// queue is empty
 	q->m_head = NULL;
@@ -84,10 +90,11 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 {
 	queue_node_t *node;
-	BOOL status;
+	int status;
 
 	// lock the critical section
-	EnterCriticalSection(&q->m_csec);
+	status = pthread_mutex_lock(&q->m_cvmtx);
+    assert(status == 0);
 
 	//  invariant : m_count never overflows or underflows
 	assert(q->m_count <= q->m_max_nodes);
@@ -97,8 +104,9 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	// fail if heap is empty
 	if (node == NULL) {
-		LeaveCriticalSection(&q->m_csec);
-		return QUEUE_FAIL;
+        status = pthread_mutex_unlock(&q->m_cvmtx);
+        assert(status == 0);
+        return QUEUE_FAIL;
 	}
 
 	// allocate room in data for the node
@@ -106,7 +114,8 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	// fail if heap is empty
 	if (node->m_data == NULL) {
-		LeaveCriticalSection(&q->m_csec);
+        status = pthread_mutex_unlock(&q->m_cvmtx);
+        assert(status == 0);
 		return QUEUE_FAIL;
 	}
 
@@ -128,8 +137,8 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
-		status = SleepConditionVariableCS(&q->m_cvput, &q->m_csec, INFINITE);
-		assert(status != 0);
+        status = pthread_cond_wait(&q->m_cvput,&q->m_cvmtx);
+        assert(status == 0);
 	}
 
 	// invariant : there is room in the queue
@@ -166,11 +175,12 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 		q->m_count += 1;
 	}
 
-	// signal the GET condition variable to wake up any getters
-	WakeConditionVariable(&q->m_cvget);
-
 	// unlock the critical section
-	LeaveCriticalSection(&q->m_csec);
+    status = pthread_mutex_unlock(&q->m_cvmtx);
+    assert(status == 0);
+
+	// signal the GET condition variable to wake up any getters
+	pthread_cond_signal(&q->m_cvget);
 
 	return QUEUE_SUCCESS;
 }
@@ -188,10 +198,11 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 {
 	queue_node_t *node;
-	BOOL status;
+	int status;
 
 	// lock the critical section
-	EnterCriticalSection(&q->m_csec);
+    status = pthread_mutex_lock(&q->m_cvmtx);
+    assert(status == 0);
 
 	//  invariant : m_count never overflows or underflows
 	assert(q->m_count <= q->m_max_nodes);
@@ -203,8 +214,15 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
-		status = SleepConditionVariableCS(&q->m_cvget, &q->m_csec, INFINITE);
-		assert(status != 0);
+		status = pthread_cond_wait(&q->m_cvget,&q->m_cvmtx);
+
+
+		// if status indicates an error, release critical section and return failure
+		if (status != 0) {
+			status = pthread_mutex_unlock(&q->m_cvmtx);
+    		assert(status == 0);
+			return QUEUE_FAIL;
+		}
 	}
 
 	// invariant : there is data in the queue
@@ -240,16 +258,18 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 		q->m_head = q->m_head->m_next;
 	}
 
-	// signal the PUT condition variable to wake up any putters
-	WakeConditionVariable(&q->m_cvput);
-
 	// unlock the critical section
-	LeaveCriticalSection(&q->m_csec);
+	status = pthread_mutex_unlock(&q->m_cvmtx);
+	assert(status == 0);
+
+	// signal the PUT condition variable to wake up any putters
+	pthread_cond_signal(&q->m_cvput);
+
 
 	return QUEUE_SUCCESS;
 }
 
-void getter(void *arg)
+void *getter(void *arg)
 {
 	bounded_queue_t *q;
 	uint64_t v;
@@ -264,33 +284,34 @@ void getter(void *arg)
 	v = 0;
 	for (;;) {
 		// sleep a random amount
-		Sleep(rand() % 10);
+		usleep((rand() % 10) * 1000);
 
 		// get an item
 		status = queue_get(q, &v, &size);
 
 		// quit on failure
 		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %llu\n", __FILE__, __LINE__,u);
+			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__,u);
 			exit(1);
 		}
 		// check the data
 		if (v < u) {
-			printf("%s:%d QUEUE GET MISMATCH : %llu %llu\n", __FILE__, __LINE__,u,  v);
+			printf("%s:%d QUEUE GET MISMATCH : %zu %zu\n", __FILE__, __LINE__,u,  v);
 			exit(1);
 		}
 		// check the size
 		if (size != sizeof(uint64_t)) {
-			printf("%s:%d QUEUE GET SIZE : %llu %llu\n", __FILE__, __LINE__, u, size);
+			printf("%s:%d QUEUE GET SIZE : %zu %zu\n", __FILE__, __LINE__, u, size);
 			exit(1);
 		}
 		// update u
 		u = v;
 
 	}
+	return NULL;
 }
 
-void putter(void *arg)
+void *putter(void *arg)
 {
 	bounded_queue_t *q;
 	uint64_t v;
@@ -302,39 +323,41 @@ void putter(void *arg)
 	v = 0;
 	for (;;) {
 		// sleep a random amount
-		Sleep(rand() % 10);
+		usleep((rand() % 10) * 1000);
 
 		// get an item
 		status = queue_put(q, &v, sizeof(v));
 
 		// quit on failure
 		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %llu\n", __FILE__, __LINE__, v);
+			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, v);
 			exit(1);
 		}
 
 		// update v
 		v += 1;
 	}
+	return NULL;
 }
 
 int main(int argc,char *argv)
 {
 
 	bounded_queue_t q;
+    pthread_t t1;
+    pthread_t t2;
 
 	// initialize a queue
 	queue_init(&q, 8);
 
 	// start getter thread, pass in queue pointer
-	_beginthread(getter, 0, &q);
-
+	pthread_create(&t1, NULL, getter, &q);
 	// start putter thread, pass in queue pointer
-	_beginthread(putter, 0, &q);
+	pthread_create(&t2, NULL, putter, &q);
 	
 	// quit on any key entered
-	while (!_kbhit()) {
-		Sleep(1000);
+	for(int i=0;i<15;++i) {
+		sleep(1);
 		update();
 	}
 
