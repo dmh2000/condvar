@@ -9,11 +9,7 @@
 #define QUEUE_SUCCESS 0
 #define QUEUE_FAIL    1
 
-uint32_t get_wait = 0;
-uint32_t put_wait = 0;
-uint32_t get_count = 0;
-uint32_t put_count = 0;
-bool kill_all = false;
+
 
 // bounded queue type
 template<typename T> class bounded_queue_t {
@@ -28,6 +24,21 @@ private:
 	std::queue<T> m_queue;
 	// max elements in queue
 	size_t m_max_nodes;
+
+
+public:
+	// test help
+	// remove before flight
+	uint32_t m_get_wait = 0;
+	uint32_t m_put_wait = 0;
+	uint32_t m_get_count = 0;
+	uint32_t m_put_count = 0;	
+	void print()
+	{
+		static uint32_t count = 0;
+		printf("%u PUT::%u:%u  GET:%u:%u COUNT:%u\n",m_put_count-m_get_count, m_put_count,m_put_wait,m_get_count, m_get_wait, ++count);
+	}
+
 public:
 	bounded_queue_t(size_t max_nodes) :
 		m_max_nodes(max_nodes) {
@@ -63,9 +74,9 @@ public:
 		// on notification mutex is relocked and predicate is reevaluated
 		while (m_queue.size() == m_max_nodes) {
 			m_cvput.wait(lck);
-			put_wait++;
+			m_put_wait++;
 		}
-		put_count++;
+		m_put_count++;
 
 		// invariant : there is room in the queue
 		assert(m_queue.size() < m_max_nodes);
@@ -106,9 +117,9 @@ public:
 		// on notification mutex is relocked and predicate is reevaluated
 		while (m_queue.size() == 0) {
 			m_cvget.wait(lck);
-			++get_wait;
+			++m_get_wait;
 		}
-		++get_count;
+		++m_get_count;
 
 		// invariant : there is data in the queue
 		assert(m_queue.size() > 0);
@@ -127,13 +138,9 @@ public:
 	}
 };
 
+bool kill_all = false;
 
 
-void update(size_t c)
-{
-	static uint32_t count = 0;
-	printf("%u:%zu PUT::%u:%u  GET:%u:%u COUNT:%u\n",put_count-get_count,c, put_count,put_wait,get_count, get_wait, ++count);
-}
 
 void getter(bounded_queue_t<uint64_t> *q)
 {
@@ -206,7 +213,7 @@ int main(int argc, char *argv[])
 	for(int i=0;i<15;i++) {
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 
-		update(q.size());
+		q.print();
 	}
 	kill_all = true;
 	t1.join();
