@@ -1,7 +1,9 @@
 all : FORCE
-	$(MAKE) -C cv_cpp
-	$(MAKE) -C cv_posix
+	$(MAKE) -C cv-cpp
+	$(MAKE) -C cv-posix
 
 clean :
-	$(MAKE) -C cv_cpp clean	
-	$(MAKE) -C cv_posix clean
+	$(MAKE) -C cv-cpp clean	
+	$(MAKE) -C cv-posix clean
+
+FORCE:
