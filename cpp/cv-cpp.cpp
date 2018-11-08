@@ -47,9 +47,7 @@ public:
 	/**
 		put an element into the queue, suspend  calling thread until room is available
 		data is COPIED into the queue from the client pointer
-		@param q pointer to instantiated queue
 		@param data pointer to data item to enqueue
-		@param size size of data item to enqueue
 	*/
 	void put(const T &data)
 
@@ -87,10 +85,7 @@ public:
 	/**
 		get an element from the queue, suspend calling thread until an element is available
 		data is copied from the queue into the client pointer
-
-		@param q pointer to instantiated queue
 		@param data pointer to variable to receive data
-		@param size pinter to variable to receive size of data item that is dequeued
 	*/
 	void get(T &data)
 	{
