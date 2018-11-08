@@ -84,7 +84,7 @@ implementation have the queue initialized with a maximum number of elements, a *
 the thread blocks until room is available in the queue. In the *get* method, if the queue is empty, the calling
 thread blocks until an element becomes available. 
 
-* [C Implemention for WIN32](https://github.com/dmh2000/condvar/tree/master/win32])
+* [C Implemention for WIN32](https://github.com/dmh2000/condvar/tree/master/win32)
 * [C Implemention for POSIX](https://github.com/dmh2000/condvar/tree/master/posix)
 * [C++ 2011 Implemention](https://github.com/dmh2000/condvar/tree/master/cpp)
 
