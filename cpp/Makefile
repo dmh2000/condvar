@@ -1,5 +1,5 @@
 cv-cpp : cv-cpp.cpp
-	g++ -o $@ -g -pthread $<
+	g++ -o ,,/bin/$@ -g -pthread $<
 
 clean: 
 	rm cv-cpp	
