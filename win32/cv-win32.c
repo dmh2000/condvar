@@ -82,10 +82,7 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes, size_t data_size)
 	put an element into the queue, suspend  calling thread until room is available
 	data is copied into the queue from the client pointer
 	@param q pointer to instantiated queue
-	@param data pointer to data item to enqueue
-	@param size size of data item to enqueue
-	@return QUEUE_SUCCESS if there is room in the queue
-			QUEUE_FAIL if a system error occurred
+	@param data pointer to data item to enqueue	
 */
 void queue_put(bounded_queue_t *q, void *data)
 {
@@ -172,7 +169,6 @@ void queue_put(bounded_queue_t *q, void *data)
 
 	@param q pointer to instantiated queue
 	@param data pointer to variable to receive data
-	@param size pinter to variable to receive size of data item that is dequeued
 */
 void queue_get(bounded_queue_t *q, void *data)
 {

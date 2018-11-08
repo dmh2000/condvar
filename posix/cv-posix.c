@@ -6,7 +6,6 @@
 #include <string.h>
 #include <assert.h>
 
-#define QUEUE_FAIL    1
 
 // forward references
 typedef struct queue_node_t queue_node_t;
@@ -51,7 +50,7 @@ void update()
 	printf("%u PUT::%u:%u  GET:%u:%u COUNT:%u\n", put_count - get_count, put_count, put_wait, get_count, get_wait, ++count);
 }
 
-int32_t queue_init(bounded_queue_t *q, size_t max_nodes,size_t data_size)
+int32_t queue_init(bounded_queue_t *q, size_t max_nodes, size_t data_size)
 {
     int status;
 
@@ -87,11 +86,8 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes,size_t data_size)
 	data is copied into the queue from the client pointer
 	@param q pointer to instantiated queue
 	@param data pointer to data item to enqueue
-	@param size size of data item to enqueue
-	@return QUEUE_SUCCESS if there is room in the queue
-			QUEUE_FAIL if a system error occurred
 */
-void queue_put(bounded_queue_t *q, void *data, size_t size)
+void queue_put(bounded_queue_t *q, void *data)
 {
 	queue_node_t *node;
 	int status;
@@ -109,12 +105,11 @@ void queue_put(bounded_queue_t *q, void *data, size_t size)
 
 
 	// allocate room in data for the node
-	node->m_data = malloc(size);
+	node->m_data = malloc(q->m_data_size);
 	assert(node->m_data != NULL);
 
 	// copy the data into the node
-	memcpy(node->m_data, data, size);
-
+	memcpy(node->m_data, data, q->m_data_size);
 
 	// node has no successor
 	node->m_next = NULL;
@@ -173,8 +168,6 @@ void queue_put(bounded_queue_t *q, void *data, size_t size)
 	// signal the GET condition variable to wake up any getters
 	status = pthread_cond_signal(&q->m_cvget);
 	assert(status == 0);
-
-	return QUEUE_SUCCESS;
 }
 
 /**
@@ -183,9 +176,8 @@ void queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	@param q pointer to instantiated queue
 	@param data pointer to variable to receive data
-	@param size pinter to variable to receive size of data item that is dequeued
 */
-void  queue_get(bounded_queue_t *q, void *data, size_t *size)
+void  queue_get(bounded_queue_t *q, void *data)
 {
 	queue_node_t *node;
 	int status;
@@ -204,16 +196,11 @@ void  queue_get(bounded_queue_t *q, void *data, size_t *size)
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
 		status = pthread_cond_wait(&q->m_cvget,&q->m_cvmtx);
+		assert(status == 0);
 
-		// if status indicates an error, release critical section and return failure
-		if (status != 0) {
-			status = pthread_mutex_unlock(&q->m_cvmtx);
-    		assert(status == 0);
-			return QUEUE_FAIL;
-		}
 		++get_wait;
 	}
-	+=get_count;
+	++get_count;
 
 	// invariant : there is data in the queue
 	assert(q->m_count > 0);
@@ -222,7 +209,7 @@ void  queue_get(bounded_queue_t *q, void *data, size_t *size)
 	node = q->m_head;
 
 	// copy data to client pointer
-	memcpy(data, node->m_data, node->m_size);
+	memcpy(data, node->m_data, q->m_data_size);
 
 	// decrement the count
 	q->m_count -= 1;
@@ -275,7 +262,7 @@ void *getter(void *arg)
 		usleep((rand() % 10) * 1000);
 
 		// get an item
-		queue_get(q, &v, &size);
+		queue_get(q, &v);
 
 		// check the data
 		assert(u == v);
@@ -301,7 +288,7 @@ void *putter(void *arg)
 		usleep((rand() % 10) * 1000);
 
 		// get an item
-		queue_put(q, &v, sizeof(v));
+		queue_put(q, &v);
 		
 		// update v
 		v += 1;
@@ -317,7 +304,7 @@ int main(int argc,char *argv)
     pthread_t t2;
 
 	// initialize a queue
-	queue_init(&q, 8);
+	queue_init(&q, 8, sizeof(uint64_t));
 
 	// start getter thread, pass in queue pointer
 	pthread_create(&t1, NULL, getter, &q);
