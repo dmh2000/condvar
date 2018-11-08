@@ -16,8 +16,6 @@ typedef struct queue_node_t queue_node_t;
 typedef struct queue_node_t {
 	// pointer to data 
 	void *m_data;
-	// size of data
-	size_t m_size;
 	// next node
 	queue_node_t *m_next;
 } queue_node_t;
@@ -39,17 +37,22 @@ typedef struct bounded_queue_t {
 	size_t m_count;
 	// max elements in queue
 	size_t m_max_nodes;
+	// size of data elements
+	size_t m_data_size;
 } bounded_queue_t;
 
 uint32_t get_count = 0;
 uint32_t put_count = 0;
+uint32_t put_wait = 0;
+uint32_t get_wait = 0;
 
-void update(void)
+void update()
 {
-	printf("\rPUT : %8u  GET : %8u", put_count, get_count);
+	static uint32_t count = 0;
+	printf("%u PUT::%u:%u  GET:%u:%u COUNT:%u\n", put_count - get_count, put_count, put_wait, get_count, get_wait, ++count);
 }
 
-int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
+int32_t queue_init(bounded_queue_t *q, size_t max_nodes, size_t data_size)
 {
 	// initialize a critical section dedicated to the condition variable
 	InitializeCriticalSection(&q->m_csec);
@@ -68,6 +71,9 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 	// max nodes allowed
 	q->m_max_nodes = max_nodes;
 
+	// size of data elements
+	q->m_data_size = data_size;
+
 	// return success
 	return 0;
 }
@@ -81,7 +87,7 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 	@return QUEUE_SUCCESS if there is room in the queue
 			QUEUE_FAIL if a system error occurred
 */
-int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
+void queue_put(bounded_queue_t *q, void *data)
 {
 	queue_node_t *node;
 	BOOL status;
@@ -94,43 +100,30 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	// allocate a node
 	node = malloc(sizeof(queue_node_t));
-
-	// fail if heap is empty
-	if (node == NULL) {
-		LeaveCriticalSection(&q->m_csec);
-		return QUEUE_FAIL;
-	}
+	assert(node != NULL);
 
 	// allocate room in data for the node
-	node->m_data = malloc(size);
-
-	// fail if heap is empty
-	if (node->m_data == NULL) {
-		LeaveCriticalSection(&q->m_csec);
-		return QUEUE_FAIL;
-	}
+	node->m_data = malloc(q->m_data_size);
+	assert(node->m_data != NULL);
 
 	// copy the data into the node
-	memcpy(node->m_data, data, size);
-
-	// record the size
-	node->m_size = size;
+	memcpy(node->m_data, data, q->m_data_size);
 
 	// node has no successor
 	node->m_next = NULL;
 
 	// wait for room to be available in the queue
 	while (q->m_count == q->m_max_nodes) {
-		// test data
-		put_count++;
-
 		// no room in queue, wait on PUT condition variable
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
 		status = SleepConditionVariableCS(&q->m_cvput, &q->m_csec, INFINITE);
 		assert(status != 0);
+
+		++put_wait;
 	}
+	++put_count;
 
 	// invariant : there is room in the queue
 	assert(q->m_count < q->m_max_nodes);
@@ -171,8 +164,6 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	// unlock the critical section
 	LeaveCriticalSection(&q->m_csec);
-
-	return QUEUE_SUCCESS;
 }
 
 /**
@@ -182,10 +173,8 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 	@param q pointer to instantiated queue
 	@param data pointer to variable to receive data
 	@param size pinter to variable to receive size of data item that is dequeued
-	@return QUEUE_SUCCESS if there is an element in the queue
-			QUEUE_FAIL if a system error occurred
 */
-int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
+void queue_get(bounded_queue_t *q, void *data)
 {
 	queue_node_t *node;
 	BOOL status;
@@ -198,14 +187,16 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 
 	// wait for an element to be available in the queue
 	while (q->m_count == 0) {
-		get_count++;
 		// no data in queue, wait on GET condition variable
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
 		status = SleepConditionVariableCS(&q->m_cvget, &q->m_csec, INFINITE);
 		assert(status != 0);
+
+		++get_wait;
 	}
+	++get_count;
 
 	// invariant : there is data in the queue
 	assert(q->m_count > 0);
@@ -214,10 +205,7 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 	node = q->m_head;
 
 	// copy data to client pointer
-	memcpy(data, node->m_data, node->m_size);
-
-	// return size of node
-	*size = node->m_size;
+	memcpy(data, node->m_data, q->m_data_size);
 
 	// decrement the count
 	q->m_count -= 1;
@@ -240,13 +228,17 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 		q->m_head = q->m_head->m_next;
 	}
 
-	// signal the PUT condition variable to wake up any putters
-	WakeConditionVariable(&q->m_cvput);
+	// free the data
+	free(node->m_data);
+
+	// free the node
+	free(node);
 
 	// unlock the critical section
 	LeaveCriticalSection(&q->m_csec);
 
-	return QUEUE_SUCCESS;
+	// signal the PUT condition variable to wake up any putters
+	WakeConditionVariable(&q->m_cvput);
 }
 
 void getter(void *arg)
@@ -254,8 +246,6 @@ void getter(void *arg)
 	bounded_queue_t *q;
 	uint64_t v;
 	uint64_t u;
-	size_t   size;
-	int32_t  status;
 
 	// get bounded_queue_t pointer
 	q = (bounded_queue_t *)arg;
@@ -267,26 +257,13 @@ void getter(void *arg)
 		Sleep(rand() % 10);
 
 		// get an item
-		status = queue_get(q, &v, &size);
+		queue_get(q, &v);
 
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %llu\n", __FILE__, __LINE__,u);
-			exit(1);
-		}
 		// check the data
-		if (v < u) {
-			printf("%s:%d QUEUE GET MISMATCH : %llu %llu\n", __FILE__, __LINE__,u,  v);
-			exit(1);
-		}
-		// check the size
-		if (size != sizeof(uint64_t)) {
-			printf("%s:%d QUEUE GET SIZE : %llu %llu\n", __FILE__, __LINE__, u, size);
-			exit(1);
-		}
-		// update u
-		u = v;
+		assert(v == u);
 
+		// update u
+		++u;
 	}
 }
 
@@ -294,7 +271,6 @@ void putter(void *arg)
 {
 	bounded_queue_t *q;
 	uint64_t v;
-	int32_t  status;
 
 	// get bounded_queue_t pointer
 	q = (bounded_queue_t *)arg;
@@ -305,16 +281,10 @@ void putter(void *arg)
 		Sleep(rand() % 10);
 
 		// get an item
-		status = queue_put(q, &v, sizeof(v));
-
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %llu\n", __FILE__, __LINE__, v);
-			exit(1);
-		}
+		queue_put(q, &v);
 
 		// update v
-		v += 1;
+		++v;
 	}
 }
 
@@ -324,7 +294,7 @@ int main(int argc,char *argv)
 	bounded_queue_t q;
 
 	// initialize a queue
-	queue_init(&q, 8);
+	queue_init(&q, 8, sizeof(uint64_t));
 
 	// start getter thread, pass in queue pointer
 	_beginthread(getter, 0, &q);
@@ -333,7 +303,7 @@ int main(int argc,char *argv)
 	_beginthread(putter, 0, &q);
 	
 	// quit on any key entered
-	while (!_kbhit()) {
+	for(int i=0;i<15;++i) {
 		Sleep(1000);
 		update();
 	}

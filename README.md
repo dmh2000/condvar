@@ -87,3 +87,10 @@ thread blocks until an element becomes available.
 * [C Implemention for WIN32](https://github.com/dmh2000/condvar/tree/master/win32])
 * [C Implemention for POSIX](https://github.com/dmh2000/condvar/tree/master/posix)
 * [C++ 2011 Implemention](https://github.com/dmh2000/condvar/tree/master/cpp)
+
+Notes:
+* The C++ version requires C++2011 or later
+* The C++ version was tested with VS2017 and g++ version 4.x
+* The Win32 version was built with VS2017 in 64 bit mode
+* The Win32 version should work with Windows Vista or Server 2008 or later
+* the POSIX version was tested on Linux with gcc/g++ version 4.x

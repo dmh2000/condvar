@@ -6,11 +6,6 @@
 #include <cassert>
 #include <cstdint>
 
-#define QUEUE_SUCCESS 0
-#define QUEUE_FAIL    1
-
-
-
 // bounded queue type
 template<typename T> class bounded_queue_t {
 private:
@@ -55,10 +50,8 @@ public:
 		@param q pointer to instantiated queue
 		@param data pointer to data item to enqueue
 		@param size size of data item to enqueue
-		@return QUEUE_SUCCESS if there is room in the queue
-				QUEUE_FAIL if a system error occurred
 	*/
-	int32_t put(const T &data)
+	void put(const T &data)
 
 	{		
 		// lock object for condition variable
@@ -89,8 +82,6 @@ public:
 
 		// signal the GET condition variable to wake up any getters
 		m_cvget.notify_one();
-
-		return QUEUE_SUCCESS;
 	}
 
 	/**
@@ -100,10 +91,8 @@ public:
 		@param q pointer to instantiated queue
 		@param data pointer to variable to receive data
 		@param size pinter to variable to receive size of data item that is dequeued
-		@return QUEUE_SUCCESS if there is an element in the queue
-				QUEUE_FAIL if a system error occurred
 	*/
-	int32_t get(T &data)
+	void get(T &data)
 	{
 		// lock object for condition variable
 		std::unique_lock<std::mutex> lck(m_cvmtx);
@@ -133,8 +122,6 @@ public:
 
 		// signal the PUT condition variable to wake up any putters
 		m_cvput.notify_one();
-
-		return QUEUE_SUCCESS;
 	}
 };
 
@@ -146,7 +133,6 @@ void getter(bounded_queue_t<uint64_t> *q)
 {
 	uint64_t v;
 	uint64_t u;
-	int32_t  status;
 
 	u = 0;
 	v = 0;
@@ -155,28 +141,19 @@ void getter(bounded_queue_t<uint64_t> *q)
 		std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
 
 		// get an item
-		status = q->get(v);
+		q->get(v);
 
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, u);
-			exit(1);
-		}
-		// check the data (v must be equal or greater than u)
-		if (v < u) {
-			printf("%s:%d QUEUE GET MISMATCH : %zu %zu\n", __FILE__, __LINE__, u, v);
-			exit(1);
-		}
+		// check the data
+		assert(v == u);
+
 		// update u
-		u = v;
-
+		++u;
 	}
 }
 
 void putter(bounded_queue_t<uint64_t> *q)
 {
 	uint64_t v;
-	int32_t  status;
 
 	v = 0;
 	while(!kill_all) {
@@ -184,16 +161,10 @@ void putter(bounded_queue_t<uint64_t> *q)
 		std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 200));
 
 		// get an item
-		status = q->put(v);
-
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, v);
-			exit(1);
-		}
+		q->put(v);
 
 		// update v
-		v += 1;
+		++v;
 	}
 }
 

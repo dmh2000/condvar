@@ -6,8 +6,6 @@
 #include <string.h>
 #include <assert.h>
 
-
-#define QUEUE_SUCCESS 0
 #define QUEUE_FAIL    1
 
 // forward references
@@ -17,8 +15,6 @@ typedef struct queue_node_t queue_node_t;
 typedef struct queue_node_t {
 	// pointer to data 
 	void *m_data;
-	// size of data
-	size_t m_size;
 	// next node
 	queue_node_t *m_next;
 } queue_node_t;
@@ -40,17 +36,22 @@ typedef struct bounded_queue_t {
 	size_t m_count;
 	// max elements in queue
 	size_t m_max_nodes;
+	// size of data elements
+	size_t m_data_size;
 } bounded_queue_t;
 
 uint32_t get_count = 0;
 uint32_t put_count = 0;
+uint32_t get_wait = 0;
+uint32_t put_wait = 0;
 
-void update(void)
+void update()
 {
-	printf("PUT : %8u  GET : %8u\n", put_count, get_count);
+	static uint32_t count = 0;
+	printf("%u PUT::%u:%u  GET:%u:%u COUNT:%u\n", put_count - get_count, put_count, put_wait, get_count, get_wait, ++count);
 }
 
-int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
+int32_t queue_init(bounded_queue_t *q, size_t max_nodes,size_t data_size)
 {
     int status;
 
@@ -74,6 +75,9 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 	// max nodes allowed
 	q->m_max_nodes = max_nodes;
 
+	// size of data elements
+	q->m_data_size = data_size;
+
 	// return success
 	return 0;
 }
@@ -87,7 +91,7 @@ int32_t queue_init(bounded_queue_t *q, size_t max_nodes)
 	@return QUEUE_SUCCESS if there is room in the queue
 			QUEUE_FAIL if a system error occurred
 */
-int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
+void queue_put(bounded_queue_t *q, void *data, size_t size)
 {
 	queue_node_t *node;
 	int status;
@@ -101,45 +105,32 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 
 	// allocate a node
 	node = malloc(sizeof(queue_node_t));
+	assert(node != NULL);
 
-	// fail if heap is empty
-	if (node == NULL) {
-        status = pthread_mutex_unlock(&q->m_cvmtx);
-        assert(status == 0);
-        return QUEUE_FAIL;
-	}
 
 	// allocate room in data for the node
 	node->m_data = malloc(size);
-
-	// fail if heap is empty
-	if (node->m_data == NULL) {
-        status = pthread_mutex_unlock(&q->m_cvmtx);
-        assert(status == 0);
-		return QUEUE_FAIL;
-	}
+	assert(node->m_data != NULL);
 
 	// copy the data into the node
 	memcpy(node->m_data, data, size);
 
-	// record the size
-	node->m_size = size;
 
 	// node has no successor
 	node->m_next = NULL;
 
 	// wait for room to be available in the queue
 	while (q->m_count == q->m_max_nodes) {
-		// test data
-		put_count++;
-
 		// no room in queue, wait on PUT condition variable
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
         status = pthread_cond_wait(&q->m_cvput,&q->m_cvmtx);
         assert(status == 0);
+
+		++put_wait;
 	}
+	++put_count;
 
 	// invariant : there is room in the queue
 	assert(q->m_count < q->m_max_nodes);
@@ -180,7 +171,8 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
     assert(status == 0);
 
 	// signal the GET condition variable to wake up any getters
-	pthread_cond_signal(&q->m_cvget);
+	status = pthread_cond_signal(&q->m_cvget);
+	assert(status == 0);
 
 	return QUEUE_SUCCESS;
 }
@@ -192,10 +184,8 @@ int32_t queue_put(bounded_queue_t *q, void *data, size_t size)
 	@param q pointer to instantiated queue
 	@param data pointer to variable to receive data
 	@param size pinter to variable to receive size of data item that is dequeued
-	@return QUEUE_SUCCESS if there is an element in the queue
-			QUEUE_FAIL if a system error occurred
 */
-int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
+void  queue_get(bounded_queue_t *q, void *data, size_t *size)
 {
 	queue_node_t *node;
 	int status;
@@ -209,13 +199,11 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 
 	// wait for an element to be available in the queue
 	while (q->m_count == 0) {
-		get_count++;
 		// no data in queue, wait on GET condition variable
 		// this releases the critical section
 		// on return, the critical section is locked
 		// this version doesn't use a timeout
 		status = pthread_cond_wait(&q->m_cvget,&q->m_cvmtx);
-
 
 		// if status indicates an error, release critical section and return failure
 		if (status != 0) {
@@ -223,7 +211,9 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
     		assert(status == 0);
 			return QUEUE_FAIL;
 		}
+		++get_wait;
 	}
+	+=get_count;
 
 	// invariant : there is data in the queue
 	assert(q->m_count > 0);
@@ -233,9 +223,6 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 
 	// copy data to client pointer
 	memcpy(data, node->m_data, node->m_size);
-
-	// return size of node
-	*size = node->m_size;
 
 	// decrement the count
 	q->m_count -= 1;
@@ -258,15 +245,18 @@ int32_t queue_get(bounded_queue_t *q, void *data, size_t *size)
 		q->m_head = q->m_head->m_next;
 	}
 
+	// free the data
+	free(node->m_data);
+
+	// free the node
+	free(node);
+
 	// unlock the critical section
 	status = pthread_mutex_unlock(&q->m_cvmtx);
 	assert(status == 0);
 
 	// signal the PUT condition variable to wake up any putters
 	pthread_cond_signal(&q->m_cvput);
-
-
-	return QUEUE_SUCCESS;
 }
 
 void *getter(void *arg)
@@ -274,8 +264,6 @@ void *getter(void *arg)
 	bounded_queue_t *q;
 	uint64_t v;
 	uint64_t u;
-	size_t   size;
-	int32_t  status;
 
 	// get bounded_queue_t pointer
 	q = (bounded_queue_t *)arg;
@@ -287,27 +275,15 @@ void *getter(void *arg)
 		usleep((rand() % 10) * 1000);
 
 		// get an item
-		status = queue_get(q, &v, &size);
+		queue_get(q, &v, &size);
 
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__,u);
-			exit(1);
-		}
 		// check the data
-		if (v < u) {
-			printf("%s:%d QUEUE GET MISMATCH : %zu %zu\n", __FILE__, __LINE__,u,  v);
-			exit(1);
-		}
-		// check the size
-		if (size != sizeof(uint64_t)) {
-			printf("%s:%d QUEUE GET SIZE : %zu %zu\n", __FILE__, __LINE__, u, size);
-			exit(1);
-		}
-		// update u
-		u = v;
+		assert(u == v);
 
+		// update u
+		++u;
 	}
+
 	return NULL;
 }
 
@@ -315,7 +291,6 @@ void *putter(void *arg)
 {
 	bounded_queue_t *q;
 	uint64_t v;
-	int32_t  status;
 
 	// get bounded_queue_t pointer
 	q = (bounded_queue_t *)arg;
@@ -326,14 +301,8 @@ void *putter(void *arg)
 		usleep((rand() % 10) * 1000);
 
 		// get an item
-		status = queue_put(q, &v, sizeof(v));
-
-		// quit on failure
-		if (status != QUEUE_SUCCESS) {
-			printf("%s:%d QUEUE GET FAIL : %zu\n", __FILE__, __LINE__, v);
-			exit(1);
-		}
-
+		queue_put(q, &v, sizeof(v));
+		
 		// update v
 		v += 1;
 	}
