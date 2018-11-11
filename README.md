@@ -84,6 +84,8 @@ implementation have the queue initialized with a maximum number of elements, a *
 the thread blocks until room is available in the queue. In the *get* method, if the queue is empty, the calling
 thread blocks until an element becomes available. 
 
+Why would you need a bounded queue? I can think of a couple of reasons. First, you want to throttle the producer because it can run faster than the consumer. In that case the producer is suspended while the queue is full. Second, in some applications, such as an embedded system, you might want to place a finite limit on the size of the queue so it doesn't grow to the point of consuming too much memory.
+
 * [C Implemention for WIN32](https://github.com/dmh2000/condvar/blob/master/win32/cv-win32.c)
 * [C Implemention for POSIX](https://github.com/dmh2000/condvar/tree/master/posix/cv-posix.c)
 * [C++ 2011 Implemention](https://github.com/dmh2000/condvar/tree/master/cpp/cv-cpp.cpp)
